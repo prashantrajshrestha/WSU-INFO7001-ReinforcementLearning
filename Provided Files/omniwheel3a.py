@@ -9,6 +9,8 @@ Created on Mon Oct  9 13:22:41 2023
 import pygame
 import random
 import math
+import numpy as np
+from itertools import permutations, product
 
 # Initialise Pygame
 pygame.init()
@@ -21,14 +23,38 @@ WHEEL_RADIUS = 5
 TARGET_RADIUS = 10
 FONT = pygame.font.SysFont("Arial", 24)
 
+ALPHA = 0.1 #learning rate
+GAMMA = 0.9 #discount factor
+EPSILON = 0.1 #exploration rate
+
+# Creating the actions list
+permutations_list = list(product((-0.5, 0.0, 0.5), repeat=3))
+ACTIONS = [perm for perm in permutations_list]
+
+NUM_STATES = FIELD.width * FIELD.height
+NUM_ACTIONS = len(ACTIONS)
+
 def new_episode(episode = -1):
-    robot_pose = [random.randint(FIELD.left, FIELD.right), 
-                  random.randint(FIELD.top, FIELD.bottom),
-                  random.randint(0,359)]    
-    target_pos = [random.randint(FIELD.left, FIELD.right), 
-                  random.randint(FIELD.top, FIELD.bottom)]
-    
+    if episode < 500:
+        max_distance = max(50 , episode )
+    else:
+        max_distance = 9999
+    while True :
+        robot_pose = [random.randint(FIELD.left , FIELD.right),
+        random.randint(FIELD.top, FIELD.bottom), 0] # random.randint(0, 359)
+
+        target_pos = [random.randint(FIELD.left , FIELD.right), random.randint(FIELD.top, FIELD.bottom)]
+        d = distance(robot_pose , target_pos)
+
+        if d <= max_distance:
+            break
+
+
     return robot_pose, target_pos, episode + 1, 0
+
+
+def distance(pose1, pose2):
+    return math.sqrt((pose1[0] - pose2[0])**2 + (pose1[1] - pose2[1])**2)
 
 
 def clip(value, min_val = -1, max_val = 1):
@@ -62,10 +88,41 @@ def update_pose(x, y, theta, omega_0, omega_1, omega_2, step_size=1.0):
     return x_prime, y_prime, theta_prime
 
 
+def angleBetween(x, y, target_pos):
+    return math.radians(math.atan2(target_pos[1] - y, target_pos[0] - x))
+
+
+def angleDiff(angle1, angle2):
+    return math.degrees(math.atan2(math.sin(angle1 - angle2), math.cos(angle1 - angle2)))
+
+def getState(x, y, theta, target_pos):
+    dx = target_pos[0] - x
+    dy = target_pos[1] - y
+    angle = math.degrees(math.atan2(dy, dx)) - theta
+
+    if angle < -180:
+        angle += 360
+    elif angle > 180:
+        angle -= 360
+
+    if abs(angle) <= 45:
+        return 0  # ball in front of the robot
+    elif abs(angle) >= 135:
+        return 1  # ball behind the robot
+    elif angle < -45:
+        return 2  # ball to the left of the robot
+    elif angle > 45 and angle < 135:
+        return 3  # ball to the right of the robot
+
+# Initialise Q-table
+Q = np.zeros((NUM_STATES, NUM_ACTIONS))
+
 # Start first episode
 score = 0
 running = True
 omega_0, omega_1, omega_2 = 0, 0, 0
+reward = -0.1
+distance_to_target = 10
 
 [x,y,theta], target_pos, episode, step = new_episode()
 
@@ -81,25 +138,58 @@ while running:
                 running = False
 
 
+    ## Choose action
+    if np.random.uniform() < EPSILON:
+        action = np.random.randint(NUM_ACTIONS)
+    else:
+        state = getState(x, y, theta, target_pos)
+        action = np.argmax(Q[state])
+
     # Update robot
-    omega_0 = random.uniform(-1, 1)
-    omega_1 = random.uniform(-1, 1)
-    omega_2 = random.uniform(-1, 1)
+    omega_0 = ACTIONS[action][0]
+    omega_1 = ACTIONS[action][1]
+    omega_2 = ACTIONS[action][2]
 
 
     x, y, theta = update_pose(x, y, theta, omega_0, omega_1, omega_2)
     step += 1
     score -= 0.01
-    # Check for target, timeout, or out-of-bounds
-    distance_to_target = math.sqrt((x - target_pos[0])**2 + (y - target_pos[1])**2)
-    if distance_to_target <= ROBOT_RADIUS:
+
+    # Reward function and checking for target, timeout, or out-of-bounds
+    current_distance_to_target = distance([x, y], target_pos)
+
+    if current_distance_to_target < distance_to_target:
+        # Increase the reward if the distance to the target is decreasing
+        reward = 0.1
+        score += 0.01
+    elif current_distance_to_target < TARGET_RADIUS:
+        # Reward the robot for reaching the target
+        reward = 1
+        score += 1
+    elif current_distance_to_target <= ROBOT_RADIUS:
+        # Reward the robot for colliding with the target
         score += 10
-        [x,y,theta], target_pos, episode, step = new_episode(episode)
+        [x, y, theta], target_pos, episode, step = new_episode(episode)
+        reward = 0
     elif not FIELD.collidepoint(x, y):
-        [x,y,theta], target_pos, episode, step = new_episode(episode)
+        # Penalize the robot for going out of bounds
+        [x, y, theta], target_pos, episode, step = new_episode(episode)
         score -= 10
+        reward = 0
     elif step > 1000:
-        [x,y,theta], target_pos, episode, step = new_episode(episode)
+        # Start a new episode if the episode has timed out
+        [x, y, theta], target_pos, episode, step = new_episode(episode)
+        reward = 0
+
+    # Update Q-table
+    next_state = getState(x, y, theta, target_pos)
+    next_action = np.argmax(Q[next_state])
+    Q[state, action] += ALPHA * (reward + GAMMA * Q[next_state, next_action] - Q[state, action])
+    state = next_state
+    action = next_action
+
+    distance_to_target = current_distance_to_target
+
         
     # Draw everything
     screen.fill((0, 0, 0))
@@ -119,3 +209,6 @@ while running:
     
     pygame.display.flip()
     pygame.time.delay(50)
+
+np.save('policy3b1.npy', Q)
+np.save('rewards3b1.npy', reward_list)
