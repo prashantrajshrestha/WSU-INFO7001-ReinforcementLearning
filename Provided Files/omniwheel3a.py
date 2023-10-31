@@ -25,7 +25,9 @@ FONT = pygame.font.SysFont("Arial", 24)
 
 ALPHA = 0.1 #learning rate
 GAMMA = 0.9 #discount factor
-EPSILON = 0.1 #exploration rate
+EPSILON = 1 #exploration rate
+
+reward_list = []
 
 # Creating the actions list
 permutations_list = list(product((-0.5, 0.0, 0.5), repeat=3))
@@ -34,7 +36,12 @@ ACTIONS = [perm for perm in permutations_list]
 NUM_STATES = FIELD.width * FIELD.height
 NUM_ACTIONS = len(ACTIONS)
 
-def new_episode(episode = -1):
+def new_episode(episode = -1, episode_reward = 0):
+    global EPSILON 
+    EPSILON = max(EPSILON *( 1 - 0.02), 0.01)
+    reward_list.append(episode_reward) 
+    print(EPSILON)
+
     if episode < 500:
         max_distance = max(50 , episode )
     else:
@@ -50,7 +57,7 @@ def new_episode(episode = -1):
             break
 
 
-    return robot_pose, target_pos, episode + 1, 0
+    return robot_pose, target_pos, episode + 1, 0, 0
 
 
 def distance(pose1, pose2):
@@ -121,10 +128,10 @@ Q = np.zeros((NUM_STATES, NUM_ACTIONS))
 score = 0
 running = True
 omega_0, omega_1, omega_2 = 0, 0, 0
-reward = -0.1
+reward = 0
 distance_to_target = 10
 
-[x,y,theta], target_pos, episode, step = new_episode()
+[x,y,theta], target_pos, episode, step, episode_reward = new_episode()
 
 # Create screen
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -141,6 +148,7 @@ while running:
     ## Choose action
     if np.random.uniform() < EPSILON:
         action = np.random.randint(NUM_ACTIONS)
+        state = getState(x, y, theta, target_pos)
     else:
         state = getState(x, y, theta, target_pos)
         action = np.argmax(Q[state])
@@ -157,29 +165,41 @@ while running:
 
     # Reward function and checking for target, timeout, or out-of-bounds
     current_distance_to_target = distance([x, y], target_pos)
+    # print(current_distance_to_target)
 
-    if current_distance_to_target < distance_to_target:
-        # Increase the reward if the distance to the target is decreasing
-        reward = 0.1
-        score += 0.01
-    elif current_distance_to_target < TARGET_RADIUS:
-        # Reward the robot for reaching the target
-        reward = 1
-        score += 1
-    elif current_distance_to_target <= ROBOT_RADIUS:
-        # Reward the robot for colliding with the target
-        score += 10
-        [x, y, theta], target_pos, episode, step = new_episode(episode)
+    # if current_distance_to_target < 5:
+    #     [x, y, theta], target_pos, episode, step, episode_reward = new_episode(episode, episode_reward)
+    #     reward 
+    if step > 1000:
+        # Start a new episode if the episode has timed out
+        [x, y, theta], target_pos, episode, step, episode_reward = new_episode(episode, episode_reward)
         reward = 0
     elif not FIELD.collidepoint(x, y):
         # Penalize the robot for going out of bounds
-        [x, y, theta], target_pos, episode, step = new_episode(episode)
-        score -= 10
-        reward = 0
-    elif step > 1000:
-        # Start a new episode if the episode has timed out
-        [x, y, theta], target_pos, episode, step = new_episode(episode)
-        reward = 0
+        [x, y, theta], target_pos, episode, step, episode_reward = new_episode(episode, episode_reward)
+        score -= 1
+        reward = -10
+    elif current_distance_to_target <= ROBOT_RADIUS:
+        # Reward the robot for colliding with the target
+        [x, y, theta], target_pos, episode, step, episode_reward = new_episode(episode, episode_reward)
+        reward = 1
+        score += 10
+    elif current_distance_to_target < distance_to_target:
+        # Increase the reward if the distance to the target is decreasing
+        reward = 0.1
+        score += 0.01
+    # elif current_distance_to_target < TARGET_RADIUS:
+    #     # Reward the robot for reaching the target
+    #     reward = 10
+    #     score += 1
+    elif step > 1 and action != previous_action:
+        # Penalty for turning
+        reward = -0.01
+        score += reward
+
+    previous_action = action
+    distance_to_target = current_distance_to_target
+    episode_reward += reward
 
     # Update Q-table
     next_state = getState(x, y, theta, target_pos)
@@ -187,8 +207,6 @@ while running:
     Q[state, action] += ALPHA * (reward + GAMMA * Q[next_state, next_action] - Q[state, action])
     state = next_state
     action = next_action
-
-    distance_to_target = current_distance_to_target
 
         
     # Draw everything
@@ -208,7 +226,7 @@ while running:
     screen.blit(score_surface, (WIDTH - 400, 10))
     
     pygame.display.flip()
-    pygame.time.delay(50)
+    # pygame.time.delay(1)
 
 np.save('policy3b1.npy', Q)
 np.save('rewards3b1.npy', reward_list)
