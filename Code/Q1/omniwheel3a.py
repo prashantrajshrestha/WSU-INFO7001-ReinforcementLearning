@@ -222,7 +222,7 @@ while running:
     screen.blit(score_surface, (WIDTH - 400, 10))
     
     pygame.display.flip()
-    # pygame.time.delay(1)
+    pygame.time.delay(1)
 
-np.save('policy3b1.npy', Q)
-np.save('rewards3b1.npy', reward_list)
+# np.save('policy3b1.npy', Q)
+# np.save('rewards3b1.npy', reward_list)
